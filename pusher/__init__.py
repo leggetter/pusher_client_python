@@ -1,4 +1,4 @@
-import httplib, time, sys, hmac
+import httplib, urllib, time, sys, hmac
 
 try:
     import json
@@ -7,6 +7,17 @@ try:
         raise ImportError
 except ImportError:
     import simplejson as json
+
+try:
+    from collections import OrderedDict
+except ImportError:
+    print "Python 2.7+ OrderedDict collection not available"
+    try:
+        from ordereddict import OrderedDict
+        print "Using backported OrderedDict implementation"
+    except ImportError:
+        print "Backported OrderedDict implementation not available"    
+
 
 # 2.4 hashlib implementation: http://code.krypto.org/python/hashlib/
 import hashlib
@@ -64,6 +75,42 @@ class Pusher(object):
     def _make_channel(self, name):
         self._channels[name] = channel_type(name, self)
         return self._channels[name]
+
+    def get(self, path, options = {}):
+
+        # TODO: refactor so auth signature generation is reusable and centralised
+        
+        options['auth_key'] = "%s" % (self.key)
+        options['auth_timestamp'] = "%s" % (int(time.time()))
+        options['auth_version'] = "%s" % ("1.0")
+
+        request_path = '/apps/%s%s' % (self.app_id, path)
+        query_string_to_sign = urllib.urlencode( OrderedDict(sorted(options.items(), key=lambda t: t[0])) )
+
+        string_to_sign = 'GET\n%s\n%s' % (request_path, query_string_to_sign)
+
+        print('signing: ', string_to_sign)
+
+        signature = hmac.new(self.secret, string_to_sign, sha_constructor).hexdigest()
+
+        query_string = query_string_to_sign + '&auth_signature=%s' % (signature)
+
+        full_path = '%s?%s' % (request_path, query_string)
+
+        print('full path: ',  full_path)
+
+        http = httplib.HTTPConnection(self.host, self.port)
+        http.request('GET', full_path)
+
+        http_response = http.getresponse()
+        response = {
+            'statusCode': http_response.status,
+            'body': http_response.read()
+        }
+        if response['statusCode'] == 200:
+            response['result'] = json.loads( response['body'] )
+
+        return response
 
 class Channel(object):
     def __init__(self, name, pusher):
